@@ -96,27 +96,75 @@ export async function callAIStream(
 }
 
 /**
+ * 从文本中提取平衡的括号内容（用于提取 JSON 对象或数组）
+ * 相比贪婪正则，能正确处理文本中多个括号的情况
+ */
+function extractBalancedBraces(text: string, open: string, close: string): string | null {
+  const startIdx = text.indexOf(open);
+  if (startIdx === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = startIdx; i < text.length; i++) {
+    const ch = text[i];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      escapeNext = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === open) {
+      depth++;
+    } else if (ch === close) {
+      depth--;
+      if (depth === 0) {
+        return text.substring(startIdx, i + 1);
+      }
+    }
+  }
+
+  return null; // 括号不匹配
+}
+
+/**
  * 从 AI 响应文本中提取 JSON
  * 处理 AI 可能用 markdown 代码块包裹 JSON 的情况
+ * 使用平衡括号匹配，比贪婪正则更健壮
  */
 export function extractJSON(text: string): string {
-  // 尝试匹配 ```json ... ``` 代码块
-  const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  // 尝试匹配 ```json ... ``` 或 ``` ... ``` 代码块（支持大小写）
+  const jsonBlockMatch = text.match(/```(?:json|JSON)?\s*([\s\S]*?)```/);
   if (jsonBlockMatch) {
-    return jsonBlockMatch[1].trim();
+    const inner = jsonBlockMatch[1].trim();
+    // 在代码块内部再次尝试提取 JSON 对象/数组（去掉可能的说明文字）
+    const obj = extractBalancedBraces(inner, "{", "}");
+    if (obj) return obj;
+    const arr = extractBalancedBraces(inner, "[", "]");
+    if (arr) return arr;
+    return inner;
   }
 
-  // 尝试匹配 { ... } 对象
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    return jsonMatch[0].trim();
-  }
+  // 尝试用平衡括号匹配提取 { ... } 对象
+  const objMatch = extractBalancedBraces(text, "{", "}");
+  if (objMatch) return objMatch;
 
-  // 尝试匹配 [ ... ] 数组
-  const arrayMatch = text.match(/\[[\s\S]*\]/);
-  if (arrayMatch) {
-    return arrayMatch[0].trim();
-  }
+  // 尝试用平衡括号匹配提取 [ ... ] 数组
+  const arrMatch = extractBalancedBraces(text, "[", "]");
+  if (arrMatch) return arrMatch;
 
   return text.trim();
 }

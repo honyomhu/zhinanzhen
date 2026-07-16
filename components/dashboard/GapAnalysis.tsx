@@ -40,33 +40,58 @@ const GAP_LEVEL_LABELS: Record<string, string> = {
   minor: "🔵 轻微缺口",
 };
 
+/** 按紧急程度排序：critical > moderate > minor */
+const GAP_LEVEL_ORDER: Record<string, number> = {
+  critical: 0,
+  moderate: 1,
+  minor: 2,
+};
+
 export default function GapAnalysis({ data }: GapAnalysisProps) {
+  // 按紧急程度从高到低排序：关键缺口 → 中等缺口 → 轻微缺口
+  const sortedGaps = [...data.gapDetails].sort(
+    (a, b) => (GAP_LEVEL_ORDER[a.gapLevel] ?? 99) - (GAP_LEVEL_ORDER[b.gapLevel] ?? 99)
+  );
+
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* 整体策略 */}
+      {/* 优先级说明 */}
       <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950/30 dark:to-pink-950/30 rounded-xl p-5 border border-purple-100 dark:border-purple-900">
         <h3 className="font-bold text-slate-800 dark:text-slate-200 mb-2">
-          📋 总体补课策略
+          📋 补课优先级
         </h3>
-        <p className="text-sm text-slate-600 dark:text-slate-400">{data.overallStrategy}</p>
+        <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">
+          {data.overallStrategy}
+        </p>
+        <div className="flex flex-wrap gap-3 text-xs">
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-medium">
+            🔴 关键缺口 — 面试官可能因此直接淘汰，优先准备
+          </span>
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 font-medium">
+            🟡 中等缺口 — 可以弥补，充分准备后可过关
+          </span>
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 font-medium">
+            🔵 轻微缺口 — 加分项缺失，不影响基本匹配
+          </span>
+        </div>
       </div>
 
-      {/* 优先级排序 */}
+      {/* 排序后的缺口顺序 */}
       <div className="flex items-center gap-2 text-sm text-slate-500">
-        <span>补课优先级：</span>
-        {data.priorityOrder.map((id, i) => (
-          <span key={id} className="font-mono text-xs bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-            {id} {i < data.priorityOrder.length - 1 ? "→" : ""}
+        <span>👇 按紧急程度排序：</span>
+        {sortedGaps.map((gap, i) => (
+          <span key={gap.requirementId} className="font-mono text-xs bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
+            {gap.requirementId} {i < sortedGaps.length - 1 ? "→" : ""}
           </span>
         ))}
       </div>
 
-      {/* 逐条缺口详情 */}
+      {/* 逐条缺口详情（已按紧急程度排序） */}
       <div className="space-y-4">
         <h4 className="font-semibold text-slate-700 dark:text-slate-300">
           🔧 缺口应对方案
         </h4>
-        {data.gapDetails.map((gap) => (
+        {sortedGaps.map((gap) => (
           <div
             key={gap.requirementId}
             className={`rounded-xl p-4 border shadow-sm ${GAP_LEVEL_STYLES[gap.gapLevel]}`}

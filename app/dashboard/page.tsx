@@ -70,6 +70,56 @@ export default function DashboardPage() {
     }
   }, [router]);
 
+  // ========== 预加载：仪表盘挂载后立即加载 JD → STAR，避免切换 Tab 时串行等待 ==========
+  const preloadStarted = useRef(false);
+
+  useEffect(() => {
+    if (!hasData || preloadStarted.current) return;
+    preloadStarted.current = true;
+
+    const preload = async () => {
+      // 1. 确保 JD 拆解就绪（从缓存或 API）
+      let jd = getCache<JDBreakdownType>("jd_breakdown");
+      if (jd) {
+        setJDBreakdown(jd);
+        jdBreakdownRef.current = jd;
+      } else {
+        try {
+          setLoading("jd");
+          jd = await fetchTabData("jd", null, null);
+          setCache("jd_breakdown", jd);
+          setJDBreakdown(jd);
+          jdBreakdownRef.current = jd;
+          setLoading(null);
+        } catch {
+          // JD 加载失败不阻塞，等用户手动切换到 JD tab 时重试
+          setLoading(null);
+          return;
+        }
+      }
+
+      // 2. JD 就绪后，预加载 STAR 匹配（缺口/追问/自我介绍 都依赖它）
+      let match = getCache<MatchResult>("match_result");
+      if (match) {
+        setMatchResult(match);
+        matchResultRef.current = match;
+      } else {
+        try {
+          match = await fetchTabData("star", null, jd);
+          setCache("match_result", match);
+          setMatchResult(match);
+          matchResultRef.current = match;
+        } catch {
+          // STAR 预加载失败静默处理，用户切换到对应 Tab 时会重试
+        }
+      }
+    };
+
+    preload();
+    // fetchTabData 引用稳定（不依赖 state），不需要加入 deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasData]);
+
   const getCacheKey = (tabId: string): string => {
     const map: Record<string, string> = {
       jd: "jd_breakdown",
@@ -92,7 +142,7 @@ export default function DashboardPage() {
   };
 
   /**
-   * 核心：调用 API，使用 ref 获取最新数据，避免闭包陈旧问题
+   * 核心：调用 API（不再负责加载依赖，依赖由预加载保证）
    */
   const fetchTabData = async (
     tabId: string,
@@ -183,43 +233,15 @@ export default function DashboardPage() {
   };
 
   /**
-   * 确保前置依赖就绪，返回最新数据
+   * 确保需要的依赖数据已就绪（仅读取缓存/状态，不触发 API 调用）
+   * 依赖数据由预加载 effect 保证；若尚未就绪则返回 null
    */
-  const ensureDependencies = async (): Promise<{
+  const getReadyDeps = (): {
     jd: JDBreakdownType | null;
     match: MatchResult | null;
-  }> => {
-    let jd = jdBreakdownRef.current;
-    let match = matchResultRef.current;
-
-    // 加载 JD
-    if (!jd) {
-      jd = getCache<JDBreakdownType>("jd_breakdown");
-      if (jd) {
-        setJDBreakdown(jd);
-        jdBreakdownRef.current = jd;
-      } else {
-        jd = await fetchTabData("jd", null, null);
-        setCache("jd_breakdown", jd);
-        setJDBreakdown(jd);
-        jdBreakdownRef.current = jd;
-      }
-    }
-
-    // 加载 STAR 匹配（需要 JD 做参数）
-    if (!match) {
-      match = getCache<MatchResult>("match_result");
-      if (match) {
-        setMatchResult(match);
-        matchResultRef.current = match;
-      } else {
-        match = await fetchTabData("star", null, jd);
-        setCache("match_result", match);
-        setMatchResult(match);
-        matchResultRef.current = match;
-      }
-    }
-
+  } => {
+    const jd = jdBreakdownRef.current ?? getCache<JDBreakdownType>("jd_breakdown");
+    const match = matchResultRef.current ?? getCache<MatchResult>("match_result");
     return { jd, match };
   };
 
@@ -247,7 +269,7 @@ export default function DashboardPage() {
     setForceReload((n) => n + 1);
   };
 
-  // Tab 切换时加载
+  // Tab 切换时加载（依赖已由预加载保证就绪，此处仅加载当前 Tab 自身数据）
   useEffect(() => {
     let cancelled = false;
 
@@ -257,6 +279,7 @@ export default function DashboardPage() {
       const cacheKey = getCacheKey(activeTab);
       const cached = getCache<any>(cacheKey);
 
+      // 命中缓存直接展示
       if (cached && forceReload === 0) {
         applyTabData(activeTab, cached);
         return;
@@ -266,19 +289,21 @@ export default function DashboardPage() {
       setErrors((prev) => ({ ...prev, [activeTab]: "" }));
 
       try {
-        let jd: JDBreakdownType | null = null;
-        let match: MatchResult | null = null;
+        // 获取已预加载的依赖（不触发新的 API 调用）
+        const { jd, match } = getReadyDeps();
 
-        // 需要依赖的 tab 先确保前置数据就绪
-        if (["gap", "questions", "intro", "star"].includes(activeTab)) {
-          const deps = await ensureDependencies();
-          jd = deps.jd;
-          match = deps.match;
+        // STAR 匹配：如果预加载已拉取到数据，直接使用，避免重复 API 调用
+        if (activeTab === "star" && match && forceReload === 0) {
+          if (cancelled) return;
+          setCache(cacheKey, match);
+          applyTabData(activeTab, match);
+          setLoading(null);
+          return;
         }
 
         if (cancelled) return;
 
-        // questions/gap/intro 需要 match 数据，star/jd 不需要
+        // 加载当前 Tab 数据
         const data = await fetchTabData(activeTab, match, jd);
         if (cancelled) return;
 
@@ -289,12 +314,18 @@ export default function DashboardPage() {
         const msg = error instanceof Error ? error.message : "加载失败";
         setErrors((prev) => ({ ...prev, [activeTab]: msg }));
       } finally {
-        if (!cancelled) setLoading(null);
+        if (!cancelled) {
+          setLoading(null);
+          // 重新生成完成后重置 forceReload，恢复后续 Tab 切换的缓存命中
+          setForceReload(0);
+        }
       }
     };
 
     load();
     return () => { cancelled = true; };
+    // fetchTabData / getReadyDeps 通过 ref 读取最新值，引用稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, hasData, forceReload]);
 
   // 计算 badge 数量（优先用实际加载数据，确保数字一致）
