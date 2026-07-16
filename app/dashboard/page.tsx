@@ -53,6 +53,7 @@ export default function DashboardPage() {
     intro: "pending",
   });
   const startedAtRef = useRef<number>(0);
+  const [jdExpanded, setJdExpanded] = useState(false);
 
   // 用 ref 保存最新值，避免闭包陈旧问题
   const matchResultRef = useRef<MatchResult | null>(null);
@@ -447,6 +448,46 @@ export default function DashboardPage() {
           🤖 开始模拟面试
         </button>
       </div>
+
+      {/* 目标岗位 JD（可折叠，方便随时对照） */}
+      {jdText && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+          <button
+            onClick={() => setJdExpanded(!jdExpanded)}
+            className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-lg flex-shrink-0">📋</span>
+              <div className="min-w-0">
+                <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  目标岗位
+                  {jdBreakdown?.position && (
+                    <span className="text-blue-600 dark:text-blue-400"> — {jdBreakdown.position}</span>
+                  )}
+                  {jdBreakdown?.company && (
+                    <span className="text-slate-400 text-xs ml-1">@{jdBreakdown.company}</span>
+                  )}
+                </span>
+                {!jdExpanded && (
+                  <p className="text-xs text-slate-400 truncate mt-0.5 max-w-md">
+                    {jdText.slice(0, 100).replace(/\n/g, " ")}...
+                  </p>
+                )}
+              </div>
+            </div>
+            <span className="text-slate-400 text-xs flex-shrink-0">
+              {jdExpanded ? "▲ 收起" : "▼ 展开对照"}
+            </span>
+          </button>
+          {jdExpanded && (
+            <div className="px-4 pb-4 border-t border-slate-100 dark:border-slate-800 pt-3 animate-slide-in-right">
+              <pre className="text-sm text-slate-600 dark:text-slate-400 whitespace-pre-wrap font-sans leading-relaxed max-h-64 overflow-y-auto">
+                {jdText}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 分析进度条 */}
       <ProgressBar
