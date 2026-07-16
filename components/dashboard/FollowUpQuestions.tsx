@@ -63,6 +63,40 @@ function QuestionCard({
   typeInfo: { label: string; icon: string; bg: string };
 }) {
   const [showAnswer, setShowAnswer] = useState(false);
+  // 练习模式
+  const [practiceAnswer, setPracticeAnswer] = useState("");
+  const [practicing, setPracticing] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    score: number;
+    briefFeedback: string;
+    goodPoints: string[];
+    improvements: string[];
+    sampleBetter: string;
+  } | null>(null);
+
+  const handlePractice = async () => {
+    if (!practiceAnswer.trim()) return;
+    setPracticing(true);
+    setFeedback(null);
+    try {
+      const res = await fetch("/api/analyze/practice-answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: question.question,
+          keyPoints: question.keyPoints,
+          userAnswer: practiceAnswer,
+        }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      setFeedback(json.data);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "练习失败，请重试");
+    } finally {
+      setPracticing(false);
+    }
+  };
 
   return (
     <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
@@ -90,6 +124,18 @@ function QuestionCard({
 
       {showAnswer && (
         <div className="px-4 pb-4 space-y-3 border-t border-slate-100 dark:border-slate-800 pt-3 animate-slide-in-right ml-8">
+          {/* AI 示例回答 */}
+          {question.sampleAnswer && (
+            <div>
+              <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">
+                💬 AI 示例回答
+              </span>
+              <div className="text-sm text-slate-600 dark:text-slate-400 mt-1.5 bg-purple-50 dark:bg-purple-950/20 rounded-lg p-3 border border-purple-100 dark:border-purple-900 leading-relaxed whitespace-pre-line">
+                {question.sampleAnswer}
+              </div>
+            </div>
+          )}
+
           {/* 回答要点 */}
           <div>
             <span className="text-xs font-semibold text-green-600 dark:text-green-400">
@@ -108,18 +154,6 @@ function QuestionCard({
             </ul>
           </div>
 
-          {/* AI 示例回答 */}
-          {question.sampleAnswer && (
-            <div>
-              <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">
-                💬 AI 示例回答
-              </span>
-              <div className="text-sm text-slate-600 dark:text-slate-400 mt-1.5 bg-purple-50 dark:bg-purple-950/20 rounded-lg p-3 border border-purple-100 dark:border-purple-900 leading-relaxed whitespace-pre-line">
-                {question.sampleAnswer}
-              </div>
-            </div>
-          )}
-
           {/* 避坑提醒 */}
           {question.trapWarning && (
             <div>
@@ -131,6 +165,69 @@ function QuestionCard({
               </p>
             </div>
           )}
+
+          {/* 练习对话框 */}
+          <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
+            <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+              🎙️ 开口练习
+            </span>
+            <p className="text-xs text-slate-400 mt-1 mb-2">
+              试试回答这个问题，AI 会给你反馈
+            </p>
+            <textarea
+              value={practiceAnswer}
+              onChange={(e) => setPracticeAnswer(e.target.value)}
+              placeholder="在这里输入你的回答..."
+              className="w-full p-3 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              rows={3}
+            />
+            <button
+              onClick={handlePractice}
+              disabled={!practiceAnswer.trim() || practicing}
+              className="mt-2 px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {practicing ? "AI 评估中..." : "提交练习"}
+            </button>
+
+            {/* AI 反馈 */}
+            {feedback && (
+              <div className="mt-3 space-y-2 animate-slide-in-right">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold">评分：</span>
+                  <span className={`text-sm font-bold ${
+                    feedback.score >= 7 ? "text-green-600" : feedback.score >= 5 ? "text-yellow-600" : "text-red-600"
+                  }`}>
+                    {feedback.score}/10
+                  </span>
+                  <span className="text-xs text-slate-400">— {feedback.briefFeedback}</span>
+                </div>
+                {feedback.goodPoints.length > 0 && (
+                  <div className="bg-green-50 dark:bg-green-950/20 rounded-lg p-2.5 border border-green-100 dark:border-green-900">
+                    <span className="text-xs font-semibold text-green-600">👍 亮点</span>
+                    <ul className="mt-1 space-y-0.5">
+                      {feedback.goodPoints.map((p, i) => (
+                        <li key={i} className="text-xs text-slate-600 dark:text-slate-400">• {p}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {feedback.improvements.length > 0 && (
+                  <div className="bg-yellow-50 dark:bg-yellow-950/20 rounded-lg p-2.5 border border-yellow-100 dark:border-yellow-900">
+                    <span className="text-xs font-semibold text-yellow-600">🔧 改进建议</span>
+                    <ul className="mt-1 space-y-0.5">
+                      {feedback.improvements.map((p, i) => (
+                        <li key={i} className="text-xs text-slate-600 dark:text-slate-400">• {p}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="bg-purple-50 dark:bg-purple-950/20 rounded-lg p-2.5 border border-purple-100 dark:border-purple-900">
+                  <span className="text-xs font-semibold text-purple-600">💡 更好的示范</span>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{feedback.sampleBetter}</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

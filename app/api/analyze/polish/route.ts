@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
         },
       ],
       temperature: 0.4,
-      maxTokens: 8192,
+      maxTokens: 16384,
     });
 
     const jsonStr = extractJSON(response);
