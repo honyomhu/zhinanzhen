@@ -7,10 +7,19 @@ import {
 
 export async function POST(request: NextRequest) {
   try {
-    const { conversationHistory, userAnswer, currentRound, jdText, matchSummary, companyText } =
-      await request.json();
+    const {
+      conversationHistory,
+      userAnswer,
+      currentRound,
+      jdText,
+      matchSummary,
+      companyText,
+      action,
+    } = await request.json();
 
-    if (!userAnswer) {
+    const mode = action || "answer"; // "answer" | "need_hint" | "need_example"
+
+    if (!userAnswer && mode === "answer") {
       return NextResponse.json(
         { success: false, error: "请提供回答内容" },
         { status: 400 }
@@ -31,17 +40,27 @@ export async function POST(request: NextRequest) {
           role: "user",
           content: buildInterviewRespondPrompt(
             conversationHistory || "",
-            userAnswer,
-            currentRound || 1
+            userAnswer || "",
+            currentRound || 1,
+            mode as "answer" | "need_hint" | "need_example"
           ),
         },
       ],
-      temperature: 0.5,
+      temperature: 0.6,
       maxTokens: 2048,
     });
 
     const jsonStr = extractJSON(response);
-    const data = JSON.parse(jsonStr);
+    let data: unknown;
+    try {
+      data = JSON.parse(jsonStr);
+    } catch (parseError) {
+      console.error("Interview respond JSON parse error:", parseError);
+      return NextResponse.json(
+        { success: false, error: "AI 返回格式异常，请重试" },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ success: true, data });
   } catch (error) {

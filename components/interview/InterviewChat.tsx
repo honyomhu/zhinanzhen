@@ -68,15 +68,20 @@ export default function InterviewChat({
     }
   }, [resumeText, jdText, matchSummary]);
 
-  // 发送回答
-  const sendAnswer = useCallback(async () => {
+  // 发送回答（或求助）
+  const sendMessage = useCallback(async (overrideAction?: "need_hint" | "need_example") => {
     const text = inputText.trim();
-    if (!text || isLoading) return;
+    const action = overrideAction || "answer";
+    if (!text && action === "answer") return;
+    if (isLoading) return;
+
+    const displayText = action === "need_hint" ? "💡 能给我一点提示吗？" :
+                        action === "need_example" ? "📖 可以示范一下怎么回答吗？" : text;
 
     const userMessage: InterviewMessage = {
       id: `msg_${messages.length}`,
       role: "user",
-      content: text,
+      content: displayText,
       timestamp: Date.now(),
     };
 
@@ -87,7 +92,6 @@ export default function InterviewChat({
     setError(null);
 
     try {
-      // 构建对话历史
       const history = newMessages
         .map((m) => `${m.role === "interviewer" ? "面试官" : "候选人"}: ${m.content}`)
         .join("\n");
@@ -102,22 +106,15 @@ export default function InterviewChat({
           jdText,
           companyText,
           matchSummary,
+          action,
         }),
       });
 
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
 
-      const { evaluation, nextQuestion, shouldEnd, endMessage } = json.data;
+      const { mode, feedback, nextQuestion, shouldEnd, endMessage, coachMessage } = json.data;
 
-      // 保存评估
-      const newEval: AnswerEvaluation = evaluation;
-      const newEvaluations = new Map(evaluations);
-      newEvaluations.set(userMessage.id, newEval);
-      setEvaluations(newEvaluations);
-      setLatestEvaluation(newEval);
-
-      // AI 回复
       if (shouldEnd && endMessage) {
         const endMsg: InterviewMessage = {
           id: `msg_${newMessages.length}`,
@@ -127,11 +124,22 @@ export default function InterviewChat({
         };
         setMessages((prev) => [...prev, endMsg]);
         setIsFinished(true);
+      } else if (mode === "coach" && coachMessage) {
+        // 教练模式：给出提示或示范，等待用户重新回答
+        const coachMsg: InterviewMessage = {
+          id: `msg_${newMessages.length}`,
+          role: "interviewer",
+          content: coachMessage,
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, coachMsg]);
+        // 不增加 round，让用户对同一个问题重新回答
       } else if (nextQuestion) {
+        // 正常模式：反馈 + 下一题
         const aiMsg: InterviewMessage = {
           id: `msg_${newMessages.length}`,
           role: "interviewer",
-          content: nextQuestion,
+          content: feedback ? `${feedback}\n\n${nextQuestion}` : nextQuestion,
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, aiMsg]);
@@ -142,7 +150,11 @@ export default function InterviewChat({
     } finally {
       setIsLoading(false);
     }
-  }, [inputText, isLoading, messages, currentRound, evaluations, jdText, matchSummary]);
+  }, [inputText, isLoading, messages, currentRound, jdText, matchSummary]);
+
+  const sendAnswer = useCallback(() => sendMessage(), [sendMessage]);
+  const askForHint = useCallback(() => sendMessage("need_hint"), [sendMessage]);
+  const askForExample = useCallback(() => sendMessage("need_example"), [sendMessage]);
 
   // 生成报告
   const generateReport = useCallback(async () => {
@@ -281,9 +293,22 @@ export default function InterviewChat({
                 发送
               </button>
             </div>
-            <p className="text-xs text-slate-400 mt-1 text-center">
-              💡 提示：使用 STAR 法则组织回答，提供具体数据和事例
-            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={askForHint}
+                disabled={isLoading}
+                className="flex-1 px-3 py-1.5 text-xs font-medium rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40 transition-colors"
+              >
+                💡 给我提示
+              </button>
+              <button
+                onClick={askForExample}
+                disabled={isLoading}
+                className="flex-1 px-3 py-1.5 text-xs font-medium rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/20 text-purple-700 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-950/40 transition-colors"
+              >
+                📖 给我示范
+              </button>
+            </div>
           </div>
         )}
 
