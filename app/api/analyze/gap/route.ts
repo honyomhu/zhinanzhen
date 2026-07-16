@@ -33,7 +33,22 @@ export async function POST(request: NextRequest) {
     });
 
     const jsonStr = extractJSON(response);
-    const data = JSON.parse(jsonStr);
+    let data: unknown;
+    try {
+      data = JSON.parse(jsonStr);
+    } catch (parseError) {
+      console.error("Gap analysis JSON parse error:", parseError);
+      console.error("Raw AI response (first 1000 chars):", response.substring(0, 1000));
+      console.error("Extracted JSON (first 1000 chars):", jsonStr.substring(0, 1000));
+      return NextResponse.json(
+        {
+          success: false,
+          error: "AI 返回数据格式异常，请点击 🔄 重试",
+          detail: parseError instanceof Error ? parseError.message : "JSON 解析失败",
+        },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ success: true, data });
   } catch (error) {

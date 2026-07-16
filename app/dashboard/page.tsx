@@ -70,7 +70,8 @@ export default function DashboardPage() {
     }
   }, [router]);
 
-  // ========== 预加载：仪表盘挂载后立即加载 JD → STAR，避免切换 Tab 时串行等待 ==========
+  // ========== 预加载：JD → STAR → 并行计算 GAP / 追问 / 自我介绍 ==========
+  // 用户在查看 JD 拆解时，后台已算好所有后续模块
   const preloadStarted = useRef(false);
 
   useEffect(() => {
@@ -92,13 +93,12 @@ export default function DashboardPage() {
           jdBreakdownRef.current = jd;
           setLoading(null);
         } catch {
-          // JD 加载失败不阻塞，等用户手动切换到 JD tab 时重试
           setLoading(null);
           return;
         }
       }
 
-      // 2. JD 就绪后，预加载 STAR 匹配（缺口/追问/自我介绍 都依赖它）
+      // 2. JD 就绪后，加载 STAR 匹配
       let match = getCache<MatchResult>("match_result");
       if (match) {
         setMatchResult(match);
@@ -110,13 +110,51 @@ export default function DashboardPage() {
           setMatchResult(match);
           matchResultRef.current = match;
         } catch {
-          // STAR 预加载失败静默处理，用户切换到对应 Tab 时会重试
+          return; // STAR 失败则后续都不可用
         }
       }
+
+      // 3. STAR 就绪后，并行预计算 GAP + 追问 + 自我介绍（用户无感知）
+      const preloadDependents = async () => {
+        const tasks: Promise<void>[] = [];
+
+        // 缺口补课
+        if (!getCache("gap_analysis")) {
+          tasks.push(
+            fetchTabData("gap", match, jd)
+              .then((d) => { setCache("gap_analysis", d); setGapData(d); })
+              .catch(() => {})
+          );
+        }
+
+        // 追问预测
+        if (!getCache("followup_questions")) {
+          tasks.push(
+            fetchTabData("questions", match, jd)
+              .then((d) => { setCache("followup_questions", d); setFollowUpData(d); })
+              .catch(() => {})
+          );
+        }
+
+        // 自我介绍
+        if (!getCache("introduction")) {
+          tasks.push(
+            fetchTabData("intro", match, jd)
+              .then((d) => { setCache("introduction", d); setIntroData(d); })
+              .catch(() => {})
+          );
+        }
+
+        if (tasks.length > 0) {
+          await Promise.allSettled(tasks);
+        }
+      };
+
+      // 后台并行预计算，不阻塞当前页面
+      preloadDependents();
     };
 
     preload();
-    // fetchTabData 引用稳定（不依赖 state），不需要加入 deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasData]);
 
