@@ -1,26 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callAI, extractJSON } from "@/lib/ai";
 
-const REFINE_INTRO_PROMPT = `你是一位顶级面试教练和简历顾问。用户提供了关于自己的补充信息，你需要据此重新生成一版更贴合实际的自我介绍。
+const REFINE_INTRO_PROMPT = `你是一位面试辅导顾问。用户对AI生成的自我介绍不满意，你需要根据ta的反馈重新生成。
 
-## 任务
-将用户补充的个人经历、优势、风格偏好融入自我介绍，保持原有版本（elevator/standard/narrative）的时间长度和风格特征。
+## 工作方式
+用户会指出具体哪里不满意，比如：
+- "这段太模板化了，不像我会说的话"
+- "这个项目细节不对，实际我是负责XX不是YY"
+- "太啰嗦了，精简一点"
+- "这里编造了我不存在的经历，删掉"
+- "语气太正式/太随意"
 
-## 三种版本说明
-- elevator: 30秒电梯演讲，一句话抓住面试官，突出最核心的差异化价值
-- standard: 2分钟标准版，涵盖背景、核心能力、关键成就、求职动机，面试最常用
-- narrative: 3分钟故事版，以成长故事为主线，有起承转合，适合氛围轻松的面试
+你需要理解用户的不满，然后修正对应的部分，同时保持其他满意的部分不变。
 
-## 要求
-- 严格使用用户提供的真实补充信息，不要编造
-- 保持对应版本的时间长度和风格
-- 开头要有记忆点（不要"我叫XX，来自XX"这种模板化开头）
-- 结尾自然过渡到"为什么适合这个岗位"
-- 用中文输出
+## 原则
+- **只能用简历中已有的信息**，不能编造公司名、项目名、数字、职位。如果简历没写，就不要加
+- 用户说"不对"的地方，严格按照用户的描述来改
+- 保持自我介绍的质量标准：讲竞争力、不念简历、有具体证据
+- 输出完整的修正后自我介绍
 
 ## 输出格式
 {
-  "content": "重新生成的自我介绍全文..."
+  "content": "修正后的完整自我介绍..."
 }`;
 
 export async function POST(request: NextRequest) {
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest) {
 
     if (!originalContent || !userFeedback) {
       return NextResponse.json(
-        { success: false, error: "请提供原始内容和补充信息" },
+        { success: false, error: "请提供原始内容和你的反馈" },
         { status: 400 }
       );
     }
@@ -40,24 +41,21 @@ export async function POST(request: NextRequest) {
       messages: [
         {
           role: "user",
-          content: `请根据用户的补充信息，重新生成以下自我介绍（${versionLabel || versionType}版本）：
+          content: `用户对以下自我介绍不满意，请根据ta的反馈重新生成。
 
-## 版本类型
-${versionLabel || versionType}
-
-## 原始 AI 生成的自我介绍
+## 当前自我介绍
 ${originalContent}
 
-## 用户的补充/修正
+## 用户不满意的地方
 ${userFeedback}
 
-## 简历参考
-${resumeText?.slice(0, 1500) || "未提供"}
+## 简历（所有事实必须来自这里，不能编造）
+${resumeText?.slice(0, 2000) || "未提供"}
 
 ## 目标岗位
-${jdText?.slice(0, 1000) || "未提供"}
+${jdText?.slice(0, 800) || "未提供"}
 
-请生成修正后的自我介绍。`,
+请输出修正后的完整自我介绍。`,
         },
       ],
       temperature: 0.5,

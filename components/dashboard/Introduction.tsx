@@ -142,7 +142,7 @@ export default function Introduction({ data }: IntroductionProps) {
                 <textarea
                   value={feedbackText}
                   onChange={(e) => setFeedbackText(e.target.value)}
-                  placeholder="请补充你的真实信息，AI 将据此重新生成这一版自我介绍…&#10;例如：我的实际亮点是主导过XX项目、擅长用数据驱动决策、个人风格偏简洁直接…"
+                  placeholder="告诉 AI 哪里不满意，它会重新生成…&#10;例如：这段太模板化了 / 这个项目细节不对，实际是XX / 太啰嗦了精简一点 / 这里不要编造我没有的经历"
                   className="w-full p-3 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                   rows={4}
                   autoFocus
