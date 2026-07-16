@@ -1,10 +1,13 @@
 "use client";
 
+type TabStatus = "pending" | "loading" | "done" | "error";
+
 interface Tab {
   id: string;
   icon: string;
   label: string;
   badge?: number | string;
+  status?: TabStatus; // 模块加载状态
 }
 
 interface DashboardTabsProps {
@@ -40,6 +43,15 @@ export default function DashboardTabs({
             >
               <span>{tab.icon}</span>
               <span>{tab.label}</span>
+              {tab.status === "loading" && (
+                <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+              )}
+              {tab.status === "done" && (
+                <span className="text-green-500 text-xs">✓</span>
+              )}
+              {tab.status === "error" && (
+                <span className="text-red-500 text-xs">✗</span>
+              )}
               {tab.badge !== undefined && (
                 <span
                   className={`

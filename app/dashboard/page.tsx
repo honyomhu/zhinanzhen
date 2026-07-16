@@ -8,6 +8,7 @@ import StarMatch from "@/components/dashboard/StarMatch";
 import GapAnalysis from "@/components/dashboard/GapAnalysis";
 import FollowUpQuestions from "@/components/dashboard/FollowUpQuestions";
 import Introduction from "@/components/dashboard/Introduction";
+import ProgressBar, { type ModuleStatus } from "@/components/dashboard/ProgressBar";
 import LoadingSkeleton from "@/components/shared/LoadingSkeleton";
 import ErrorDisplay from "@/components/shared/ErrorDisplay";
 import { getCache, setCache } from "@/lib/storage";
@@ -37,6 +38,16 @@ export default function DashboardPage() {
   const [introData, setIntroData] = useState<IntroductionResult | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // 每个模块的分析状态（pending → loading → done/error）
+  const [tabStatuses, setTabStatuses] = useState<Record<string, ModuleStatus>>({
+    jd: "pending",
+    star: "pending",
+    gap: "pending",
+    questions: "pending",
+    intro: "pending",
+  });
+  const startedAtRef = useRef<number>(0);
 
   // 用 ref 保存最新值，避免闭包陈旧问题
   const matchResultRef = useRef<MatchResult | null>(null);
@@ -70,91 +81,89 @@ export default function DashboardPage() {
     }
   }, [router]);
 
-  // ========== 预加载：JD → STAR → 并行计算 GAP / 追问 / 自我介绍 ==========
-  // 用户在查看 JD 拆解时，后台已算好所有后续模块
-  const preloadStarted = useRef(false);
+  // ========== 分析管道：按依赖关系尽可能并行启动所有模块 ==========
+  // 管道: JD → STAR → GAP ∥ QUESTIONS ∥ INTRO
+  const pipelineStarted = useRef(false);
 
   useEffect(() => {
-    if (!hasData || preloadStarted.current) return;
-    preloadStarted.current = true;
+    if (!hasData || pipelineStarted.current) return;
+    pipelineStarted.current = true;
+    startedAtRef.current = Date.now();
 
-    const preload = async () => {
-      // 1. 确保 JD 拆解就绪（从缓存或 API）
-      let jd = getCache<JDBreakdownType>("jd_breakdown");
-      if (jd) {
-        setJDBreakdown(jd);
-        jdBreakdownRef.current = jd;
-      } else {
+    const runPipeline = async () => {
+      // ---- 阶段 1：JD 拆解 ----
+      setTabStatuses((prev) => ({ ...prev, jd: "loading" }));
+      let jd: JDBreakdownType | null = getCache<JDBreakdownType>("jd_breakdown");
+      if (!jd) {
         try {
-          setLoading("jd");
           jd = await fetchTabData("jd", null, null);
           setCache("jd_breakdown", jd);
-          setJDBreakdown(jd);
-          jdBreakdownRef.current = jd;
-          setLoading(null);
-        } catch {
-          setLoading(null);
-          return;
+        } catch (e) {
+          setTabStatuses((prev) => ({ ...prev, jd: "error" }));
+          setErrors((prev) => ({ ...prev, jd: e instanceof Error ? e.message : "JD 拆解失败" }));
+          return; // JD 失败则后续都无法进行
         }
       }
+      setJDBreakdown(jd);
+      jdBreakdownRef.current = jd;
+      setTabStatuses((prev) => ({ ...prev, jd: "done" }));
 
-      // 2. JD 就绪后，加载 STAR 匹配
-      let match = getCache<MatchResult>("match_result");
-      if (match) {
-        setMatchResult(match);
-        matchResultRef.current = match;
-      } else {
+      // ---- 阶段 2：STAR 匹配（依赖 JD） ----
+      setTabStatuses((prev) => ({ ...prev, star: "loading" }));
+      let match: MatchResult | null = getCache<MatchResult>("match_result");
+      if (!match) {
         try {
           match = await fetchTabData("star", null, jd);
           setCache("match_result", match);
-          setMatchResult(match);
-          matchResultRef.current = match;
-        } catch {
-          return; // STAR 失败则后续都不可用
+        } catch (e) {
+          setTabStatuses((prev) => ({ ...prev, star: "error" }));
+          setErrors((prev) => ({ ...prev, star: e instanceof Error ? e.message : "STAR 匹配失败" }));
+          return; // STAR 失败则后续都无法进行
         }
       }
+      setMatchResult(match);
+      matchResultRef.current = match;
+      setTabStatuses((prev) => ({ ...prev, star: "done" }));
 
-      // 3. STAR 就绪后，并行预计算 GAP + 追问 + 自我介绍（用户无感知）
-      const preloadDependents = async () => {
-        const tasks: Promise<void>[] = [];
+      // ---- 阶段 3：GAP + 追问 + 自我介绍 并行启动 ----
+      const dependents = [
+        { id: "gap" as const, cacheKey: "gap_analysis", fn: () => fetchTabData("gap", match, jd) },
+        { id: "questions" as const, cacheKey: "followup_questions", fn: () => fetchTabData("questions", match, jd) },
+        { id: "intro" as const, cacheKey: "introduction", fn: () => fetchTabData("intro", match, jd) },
+      ];
 
-        // 缺口补课
-        if (!getCache("gap_analysis")) {
-          tasks.push(
-            fetchTabData("gap", match, jd)
-              .then((d) => { setCache("gap_analysis", d); setGapData(d); })
-              .catch(() => {})
-          );
-        }
+      setTabStatuses((prev) => ({
+        ...prev,
+        gap: "loading",
+        questions: "loading",
+        intro: "loading",
+      }));
 
-        // 追问预测
-        if (!getCache("followup_questions")) {
-          tasks.push(
-            fetchTabData("questions", match, jd)
-              .then((d) => { setCache("followup_questions", d); setFollowUpData(d); })
-              .catch(() => {})
-          );
-        }
-
-        // 自我介绍
-        if (!getCache("introduction")) {
-          tasks.push(
-            fetchTabData("intro", match, jd)
-              .then((d) => { setCache("introduction", d); setIntroData(d); })
-              .catch(() => {})
-          );
-        }
-
-        if (tasks.length > 0) {
-          await Promise.allSettled(tasks);
-        }
-      };
-
-      // 后台并行预计算，不阻塞当前页面
-      preloadDependents();
+      await Promise.allSettled(
+        dependents.map(async ({ id, cacheKey, fn }) => {
+          const cached = getCache<any>(cacheKey);
+          if (cached) {
+            applyTabData(id, cached);
+            setTabStatuses((prev) => ({ ...prev, [id]: "done" }));
+            return;
+          }
+          try {
+            const data = await fn();
+            setCache(cacheKey, data);
+            applyTabData(id, data);
+            setTabStatuses((prev) => ({ ...prev, [id]: "done" }));
+          } catch (e) {
+            setTabStatuses((prev) => ({ ...prev, [id]: "error" }));
+            setErrors((prev) => ({
+              ...prev,
+              [id]: e instanceof Error ? e.message : "加载失败",
+            }));
+          }
+        })
+      );
     };
 
-    preload();
+    runPipeline();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasData]);
 
@@ -286,7 +295,7 @@ export default function DashboardPage() {
   // 强制重新生成（跳过缓存）
   const [forceReload, setForceReload] = useState(0);
 
-  const handleRegenerate = (tabId: string) => {
+  const handleRegenerate = async (tabId: string) => {
     // 清除该 tab 的缓存
     const cacheKey = getCacheKey(tabId);
     try { localStorage.removeItem("jianli_" + cacheKey); } catch {}
@@ -300,6 +309,15 @@ export default function DashboardPage() {
       setFollowUpData(null);
       setGapData(null);
       setIntroData(null);
+      setTabStatuses((prev) => ({
+        ...prev,
+        star: "loading",
+        gap: "pending",
+        questions: "pending",
+        intro: "pending",
+      }));
+    } else {
+      setTabStatuses((prev) => ({ ...prev, [tabId]: "loading" }));
     }
     // 清除状态
     applyTabData(tabId, null);
@@ -307,7 +325,7 @@ export default function DashboardPage() {
     setForceReload((n) => n + 1);
   };
 
-  // Tab 切换时加载（依赖已由预加载保证就绪，此处仅加载当前 Tab 自身数据）
+  // Tab 切换：优先使用管道已加载的数据；forceReload 时重新拉取
   useEffect(() => {
     let cancelled = false;
 
@@ -315,46 +333,38 @@ export default function DashboardPage() {
       if (!resumeText || !jdText) return;
 
       const cacheKey = getCacheKey(activeTab);
-      const cached = getCache<any>(cacheKey);
 
-      // 命中缓存直接展示
-      if (cached && forceReload === 0) {
-        applyTabData(activeTab, cached);
+      // 非强制刷新时，优先用管道已缓存的数据
+      if (forceReload === 0) {
+        const cached = getCache<any>(cacheKey);
+        if (cached) {
+          applyTabData(activeTab, cached);
+          return;
+        }
+        // 管道正在跑，数据还没就绪 —— 不需要额外操作，等管道完成即可
         return;
       }
 
+      // forceReload > 0：用户点了重新生成
       setLoading(activeTab);
       setErrors((prev) => ({ ...prev, [activeTab]: "" }));
 
       try {
-        // 获取已预加载的依赖（不触发新的 API 调用）
         const { jd, match } = getReadyDeps();
-
-        // STAR 匹配：如果预加载已拉取到数据，直接使用，避免重复 API 调用
-        if (activeTab === "star" && match && forceReload === 0) {
-          if (cancelled) return;
-          setCache(cacheKey, match);
-          applyTabData(activeTab, match);
-          setLoading(null);
-          return;
-        }
-
-        if (cancelled) return;
-
-        // 加载当前 Tab 数据
         const data = await fetchTabData(activeTab, match, jd);
         if (cancelled) return;
 
         setCache(cacheKey, data);
         applyTabData(activeTab, data);
+        setTabStatuses((prev) => ({ ...prev, [activeTab]: "done" }));
       } catch (error) {
         if (cancelled) return;
         const msg = error instanceof Error ? error.message : "加载失败";
         setErrors((prev) => ({ ...prev, [activeTab]: msg }));
+        setTabStatuses((prev) => ({ ...prev, [activeTab]: "error" }));
       } finally {
         if (!cancelled) {
           setLoading(null);
-          // 重新生成完成后重置 forceReload，恢复后续 Tab 切换的缓存命中
           setForceReload(0);
         }
       }
@@ -362,17 +372,15 @@ export default function DashboardPage() {
 
     load();
     return () => { cancelled = true; };
-    // fetchTabData / getReadyDeps 通过 ref 读取最新值，引用稳定
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, hasData, forceReload]);
 
-  // 计算 badge 数量（优先用实际加载数据，确保数字一致）
-  const tabsWithBadges = TABS.map((tab) => {
+  // 构建带状态图标的 Tabs
+  const tabsWithStatus = TABS.map((tab) => {
     let badge: number | string | undefined;
     if (tab.id === "star" && matchResult) {
       badge = matchResult.matched.length;
     } else if (tab.id === "gap") {
-      // 优先用 gapData，其次用 matchResult.gaps
       if (gapData?.gapDetails?.length) {
         badge = gapData.gapDetails.length;
       } else if (matchResult?.gaps?.length) {
@@ -383,7 +391,11 @@ export default function DashboardPage() {
     } else if (tab.id === "intro" && introData) {
       badge = introData.versions.length;
     }
-    return { ...tab, badge };
+    return {
+      ...tab,
+      badge,
+      status: tabStatuses[tab.id] as ModuleStatus | undefined,
+    };
   });
 
   if (!hasData) {
@@ -405,27 +417,38 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-200">
             📊 分析仪表盘
           </h1>
-          <p className="text-sm text-slate-500 mt-1">点击下方标签查看 AI 分析结果</p>
+          <p className="text-sm text-slate-500 mt-1">AI 正在并行分析，完成后自动点亮对应模块</p>
         </div>
         <button
           onClick={() => router.push("/interview")}
-          className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl text-sm font-medium hover:shadow-lg hover:shadow-blue-500/25 transition-all"
+          className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl text-sm font-medium hover:shadow-lg hover:shadow-blue-500/25 transition-all shadow-md"
         >
           🤖 开始模拟面试
         </button>
       </div>
 
+      {/* 分析进度条 */}
+      <ProgressBar
+        modules={TABS.map((t) => ({
+          id: t.id,
+          icon: t.icon,
+          label: t.label,
+          status: tabStatuses[t.id],
+        }))}
+        startedAt={startedAtRef.current || Date.now()}
+      />
+
       {/* Tabs */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-        <DashboardTabs tabs={tabsWithBadges} activeTab={activeTab} onTabChange={setActiveTab} />
+        <DashboardTabs tabs={tabsWithStatus} activeTab={activeTab} onTabChange={setActiveTab} />
 
         <div className="p-4 sm:p-6 min-h-[400px]">
           {/* JD 拆解 */}
           {activeTab === "jd" && (
             <>
               {loading === "jd" && <LoadingSkeleton lines={6} />}
-              {errors.jd && <ErrorDisplay message={errors.jd} onRetry={() => setForceReload(n => n + 1)} />}
-              {!loading && !errors.jd && jdBreakdown && (
+              {errors.jd && <ErrorDisplay message={errors.jd} onRetry={() => handleRegenerate("jd")} />}
+              {!errors.jd && jdBreakdown && (
                 <>
                   <div className="flex justify-end mb-3">
                     <button onClick={() => handleRegenerate("jd")} className="text-xs text-slate-400 hover:text-blue-500 transition-colors">🔄 重新生成</button>
@@ -433,10 +456,18 @@ export default function DashboardPage() {
                   <JDBreakdown data={jdBreakdown} />
                 </>
               )}
-              {!loading && !errors.jd && !jdBreakdown && (
-                <div className="text-center py-12 text-slate-400">
-                  <div className="text-4xl mb-3">🔍</div>
-                  <p>正在加载 JD 拆解...</p>
+              {!errors.jd && !jdBreakdown && (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-3">
+                    {tabStatuses.jd === "loading" ? "⏳" : "🔍"}
+                  </div>
+                  <p className="text-slate-400">
+                    {tabStatuses.jd === "loading"
+                      ? "AI 正在拆解 JD 要求..."
+                      : tabStatuses.jd === "pending"
+                      ? "等待前置任务完成..."
+                      : "正在加载 JD 拆解..."}
+                  </p>
                 </div>
               )}
             </>
@@ -446,8 +477,8 @@ export default function DashboardPage() {
           {activeTab === "star" && (
             <>
               {loading === "star" && <LoadingSkeleton lines={8} />}
-              {errors.star && <ErrorDisplay message={errors.star} onRetry={() => setForceReload(n => n + 1)} />}
-              {!loading && !errors.star && matchResult && (
+              {errors.star && <ErrorDisplay message={errors.star} onRetry={() => handleRegenerate("star")} />}
+              {!errors.star && matchResult && (
                 <>
                   <div className="flex justify-end mb-3">
                     <button onClick={() => handleRegenerate("star")} className="text-xs text-slate-400 hover:text-blue-500 transition-colors">🔄 重新生成</button>
@@ -455,10 +486,18 @@ export default function DashboardPage() {
                   <StarMatch data={matchResult} />
                 </>
               )}
-              {!loading && !errors.star && !matchResult && (
-                <div className="text-center py-12 text-slate-400">
-                  <div className="text-4xl mb-3">⭐</div>
-                  <p>正在加载 STAR 匹配...</p>
+              {!errors.star && !matchResult && (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-3">
+                    {tabStatuses.star === "loading" ? "⏳" : "⭐"}
+                  </div>
+                  <p className="text-slate-400">
+                    {tabStatuses.star === "loading"
+                      ? "AI 正在匹配简历与 JD 要求..."
+                      : tabStatuses.star === "pending"
+                      ? "等待 JD 拆解完成后自动开始..."
+                      : "正在加载 STAR 匹配..."}
+                  </p>
                 </div>
               )}
             </>
@@ -468,8 +507,8 @@ export default function DashboardPage() {
           {activeTab === "gap" && (
             <>
               {loading === "gap" && <LoadingSkeleton lines={6} />}
-              {errors.gap && <ErrorDisplay message={errors.gap} onRetry={() => setForceReload(n => n + 1)} />}
-              {!loading && !errors.gap && gapData && (
+              {errors.gap && <ErrorDisplay message={errors.gap} onRetry={() => handleRegenerate("gap")} />}
+              {!errors.gap && gapData && (
                 <>
                   <div className="flex justify-end mb-3">
                     <button onClick={() => handleRegenerate("gap")} className="text-xs text-slate-400 hover:text-blue-500 transition-colors">🔄 重新生成</button>
@@ -477,10 +516,18 @@ export default function DashboardPage() {
                   <GapAnalysis data={gapData} />
                 </>
               )}
-              {!loading && !errors.gap && !gapData && (
-                <div className="text-center py-12 text-slate-400">
-                  <div className="text-4xl mb-3">🔧</div>
-                  <p>正在生成缺口分析...</p>
+              {!errors.gap && !gapData && (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-3">
+                    {tabStatuses.gap === "loading" ? "⏳" : "🔧"}
+                  </div>
+                  <p className="text-slate-400">
+                    {tabStatuses.gap === "loading"
+                      ? "AI 正在制定补课方案..."
+                      : tabStatuses.gap === "pending"
+                      ? "等待 STAR 匹配完成后自动开始..."
+                      : "正在生成缺口分析..."}
+                  </p>
                 </div>
               )}
             </>
@@ -490,8 +537,8 @@ export default function DashboardPage() {
           {activeTab === "questions" && (
             <>
               {loading === "questions" && <LoadingSkeleton lines={5} />}
-              {errors.questions && <ErrorDisplay message={errors.questions} onRetry={() => setForceReload(n => n + 1)} />}
-              {!loading && !errors.questions && followUpData && (
+              {errors.questions && <ErrorDisplay message={errors.questions} onRetry={() => handleRegenerate("questions")} />}
+              {!errors.questions && followUpData && (
                 <>
                   <div className="flex justify-end mb-3">
                     <button onClick={() => handleRegenerate("questions")} className="text-xs text-slate-400 hover:text-blue-500 transition-colors">🔄 重新生成</button>
@@ -499,10 +546,18 @@ export default function DashboardPage() {
                   <FollowUpQuestions data={followUpData} />
                 </>
               )}
-              {!loading && !errors.questions && !followUpData && (
-                <div className="text-center py-12 text-slate-400">
-                  <div className="text-4xl mb-3">💡</div>
-                  <p>正在生成追问预测...</p>
+              {!errors.questions && !followUpData && (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-3">
+                    {tabStatuses.questions === "loading" ? "⏳" : "💡"}
+                  </div>
+                  <p className="text-slate-400">
+                    {tabStatuses.questions === "loading"
+                      ? "AI 正在预测面试追问..."
+                      : tabStatuses.questions === "pending"
+                      ? "等待 STAR 匹配完成后自动开始..."
+                      : "正在生成追问预测..."}
+                  </p>
                 </div>
               )}
             </>
@@ -512,8 +567,8 @@ export default function DashboardPage() {
           {activeTab === "intro" && (
             <>
               {loading === "intro" && <LoadingSkeleton lines={4} />}
-              {errors.intro && <ErrorDisplay message={errors.intro} onRetry={() => setForceReload(n => n + 1)} />}
-              {!loading && !errors.intro && introData && (
+              {errors.intro && <ErrorDisplay message={errors.intro} onRetry={() => handleRegenerate("intro")} />}
+              {!errors.intro && introData && (
                 <>
                   <div className="flex justify-end mb-3">
                     <button onClick={() => handleRegenerate("intro")} className="text-xs text-slate-400 hover:text-blue-500 transition-colors">🔄 重新生成</button>
@@ -521,10 +576,18 @@ export default function DashboardPage() {
                   <Introduction data={introData} />
                 </>
               )}
-              {!loading && !errors.intro && !introData && (
-                <div className="text-center py-12 text-slate-400">
-                  <div className="text-4xl mb-3">🎤</div>
-                  <p>正在生成自我介绍...</p>
+              {!errors.intro && !introData && (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-3">
+                    {tabStatuses.intro === "loading" ? "⏳" : "🎤"}
+                  </div>
+                  <p className="text-slate-400">
+                    {tabStatuses.intro === "loading"
+                      ? "AI 正在撰写自我介绍..."
+                      : tabStatuses.intro === "pending"
+                      ? "等待 STAR 匹配完成后自动开始..."
+                      : "正在生成自我介绍..."}
+                  </p>
                 </div>
               )}
             </>
