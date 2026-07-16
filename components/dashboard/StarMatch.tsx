@@ -9,6 +9,11 @@ interface StarMatchProps {
 
 export default function StarMatch({ data }: StarMatchProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // 修正功能：记录哪个匹配项正在被编辑、编辑内容、以及更新后的 STAR
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [refining, setRefining] = useState(false);
+  const [refinedStars, setRefinedStars] = useState<Record<string, MatchResult["matched"][0]["star"]>>({});
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
@@ -23,6 +28,45 @@ export default function StarMatch({ data }: StarMatchProps) {
     if (score >= 8) return "text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-900/20";
     if (score >= 6) return "text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-900/20";
     return "text-yellow-600 bg-yellow-50 dark:text-yellow-400 dark:bg-yellow-900/20";
+  };
+
+  const handleStartEdit = (id: string) => {
+    setEditingId(id);
+    setFeedbackText("");
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setFeedbackText("");
+  };
+
+  const handleSubmitFeedback = async (item: MatchResult["matched"][0]) => {
+    if (!feedbackText.trim()) return;
+    setRefining(true);
+    try {
+      const res = await fetch("/api/analyze/refine-star", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requirement: item.requirement,
+          originalStar: item.star,
+          userFeedback: feedbackText,
+        }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+
+      setRefinedStars((prev) => ({
+        ...prev,
+        [item.requirementId]: json.data.star,
+      }));
+      setEditingId(null);
+      setFeedbackText("");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "修正失败，请重试");
+    } finally {
+      setRefining(false);
+    }
   };
 
   return (
@@ -45,7 +89,6 @@ export default function StarMatch({ data }: StarMatchProps) {
             <div className="text-xs text-slate-400">/ 100</div>
           </div>
         </div>
-        {/* 进度条 */}
         <div className="mt-3 h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
           <div
             className="h-full rounded-full bg-gradient-to-r from-blue-500 to-green-500 transition-all duration-1000"
@@ -56,10 +99,17 @@ export default function StarMatch({ data }: StarMatchProps) {
 
       {/* 已匹配经历 */}
       <div className="space-y-4">
-        <h4 className="font-semibold text-slate-700 dark:text-slate-300">
-          ✅ 已匹配经历（{data.matched.length} 条）
-        </h4>
-        {data.matched.map((item) => (
+        <div className="flex items-center justify-between">
+          <h4 className="font-semibold text-slate-700 dark:text-slate-300">
+            ✅ 已匹配经历（{data.matched.length} 条）
+          </h4>
+          <span className="text-xs text-slate-400">
+            💡 AI 生成可能不准确，点击「补充经历」修正
+          </span>
+        </div>
+        {data.matched.map((item) => {
+          const currentStar = refinedStars[item.requirementId] || item.star;
+          return (
           <div
             key={item.requirementId}
             className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden"
@@ -83,6 +133,11 @@ export default function StarMatch({ data }: StarMatchProps) {
                   >
                     匹配度 {item.relevanceScore}/10
                   </span>
+                  {refinedStars[item.requirementId] && (
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400">
+                      已修正
+                    </span>
+                  )}
                 </div>
               </div>
               <span className="text-slate-400 text-sm">
@@ -90,14 +145,14 @@ export default function StarMatch({ data }: StarMatchProps) {
               </span>
             </button>
 
-            {expandedIds.has(item.requirementId) && item.star && (
+            {expandedIds.has(item.requirementId) && currentStar && (
               <div className="px-4 pb-4 space-y-3 border-t border-slate-100 dark:border-slate-800 pt-3 animate-slide-in-right">
                 <div className="bg-blue-50 dark:bg-blue-950/20 rounded-lg p-3">
                   <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
                     S · 情境
                   </span>
                   <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">
-                    {item.star.situation}
+                    {currentStar.situation}
                   </p>
                 </div>
                 <div className="bg-purple-50 dark:bg-purple-950/20 rounded-lg p-3">
@@ -105,7 +160,7 @@ export default function StarMatch({ data }: StarMatchProps) {
                     T · 任务
                   </span>
                   <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">
-                    {item.star.task}
+                    {currentStar.task}
                   </p>
                 </div>
                 <div className="bg-green-50 dark:bg-green-950/20 rounded-lg p-3">
@@ -113,7 +168,7 @@ export default function StarMatch({ data }: StarMatchProps) {
                     A · 行动
                   </span>
                   <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">
-                    {item.star.action}
+                    {currentStar.action}
                   </p>
                 </div>
                 <div className="bg-orange-50 dark:bg-orange-950/20 rounded-lg p-3">
@@ -121,13 +176,55 @@ export default function StarMatch({ data }: StarMatchProps) {
                     R · 结果
                   </span>
                   <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">
-                    {item.star.result}
+                    {currentStar.result}
                   </p>
+                </div>
+
+                {/* 修正入口 */}
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
+                  {editingId === item.requirementId ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={feedbackText}
+                        onChange={(e) => setFeedbackText(e.target.value)}
+                        placeholder="请描述你的真实经历，AI 将据此重新生成 STAR 故事…&#10;例如：我当时做的不是XX，而是主导了YY项目，团队3个人，花了2个月…"
+                        className="w-full p-3 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                        rows={4}
+                        autoFocus
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleSubmitFeedback(item)}
+                          disabled={!feedbackText.trim() || refining}
+                          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {refining ? "AI 修正中..." : "提交修正"}
+                        </button>
+                        <button
+                          onClick={handleCancelEdit}
+                          className="px-3 py-1.5 text-slate-500 hover:text-slate-700 text-xs transition-colors"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleStartEdit(item.requirementId);
+                      }}
+                      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-blue-500 transition-colors"
+                    >
+                      <span>✏️</span>
+                      <span>补充真实经历 → AI 重新生成</span>
+                    </button>
+                  )}
                 </div>
               </div>
             )}
           </div>
-        ))}
+        )})}
       </div>
 
       {/* 未匹配缺口 */}

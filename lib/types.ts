@@ -62,6 +62,7 @@ export interface FollowUpQuestion {
   question: string;
   keyPoints: string[]; // 回答得分要点
   trapWarning?: string; // 需要避免的坑
+  sampleAnswer?: string; // AI 生成的示例回答
 }
 
 export interface FollowUpSet {

@@ -8,6 +8,7 @@ interface FollowUpQuestion {
   question: string;
   keyPoints: string[];
   trapWarning?: string;
+  sampleAnswer?: string; // AI 示例回答
 }
 
 interface FollowUpQuestionsProps {
@@ -106,6 +107,18 @@ function QuestionCard({
               ))}
             </ul>
           </div>
+
+          {/* AI 示例回答 */}
+          {question.sampleAnswer && (
+            <div>
+              <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">
+                💬 AI 示例回答
+              </span>
+              <div className="text-sm text-slate-600 dark:text-slate-400 mt-1.5 bg-purple-50 dark:bg-purple-950/20 rounded-lg p-3 border border-purple-100 dark:border-purple-900 leading-relaxed whitespace-pre-line">
+                {question.sampleAnswer}
+              </div>
+            </div>
+          )}
 
           {/* 避坑提醒 */}
           {question.trapWarning && (
