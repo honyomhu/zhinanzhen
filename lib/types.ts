@@ -71,6 +71,28 @@ export interface FollowUpSet {
   questions: FollowUpQuestion[];
 }
 
+// ===== 经历打磨 =====
+export interface ExperienceRisk {
+  id: string;
+  experienceTitle: string;       // 简历中的经历名称
+  originalText: string;          // 简历原文
+  riskLevel: "high" | "medium" | "low"; // 被追问的风险等级
+  riskReason: string;            // 为什么有风险
+  potentialQuestions: {          // 面试官可能的深挖问题
+    question: string;
+    whyThisMatters: string;      // 面试官为什么这么问
+    suggestedApproach: string;   // 建议的回答方向
+  }[];
+  honestReframing: string;       // 如果确实有美化，如何诚实但不减分地表述
+  keyFactsToRemember: string[];  // 面试前必须记住的关键事实
+}
+
+export interface PolishResult {
+  experiences: ExperienceRisk[];
+  overallRiskLevel: "high" | "medium" | "low";
+  overallAdvice: string;         // 整体建议
+}
+
 // ===== 自我介绍 =====
 export interface IntroductionVersion {
   type: "elevator" | "standard" | "narrative";

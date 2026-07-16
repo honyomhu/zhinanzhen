@@ -8,6 +8,7 @@ import StarMatch from "@/components/dashboard/StarMatch";
 import GapAnalysis from "@/components/dashboard/GapAnalysis";
 import FollowUpQuestions from "@/components/dashboard/FollowUpQuestions";
 import Introduction from "@/components/dashboard/Introduction";
+import ExperiencePolish from "@/components/dashboard/ExperiencePolish";
 import ProgressBar, { type ModuleStatus } from "@/components/dashboard/ProgressBar";
 import LoadingSkeleton from "@/components/shared/LoadingSkeleton";
 import ErrorDisplay from "@/components/shared/ErrorDisplay";
@@ -17,11 +18,13 @@ import type {
   MatchResult,
   FollowUpSet,
   IntroductionResult,
+  PolishResult,
 } from "@/lib/types";
 
 const TABS = [
   { id: "jd", icon: "🔍", label: "JD 拆解" },
   { id: "star", icon: "⭐", label: "STAR 匹配" },
+  { id: "polish", icon: "📝", label: "经历打磨" },
   { id: "gap", icon: "🔧", label: "缺口补课" },
   { id: "questions", icon: "💡", label: "追问预测" },
   { id: "intro", icon: "🎤", label: "自我介绍" },
@@ -36,6 +39,7 @@ export default function DashboardPage() {
   const [gapData, setGapData] = useState<any>(null);
   const [followUpData, setFollowUpData] = useState<{ questions: any[] } | null>(null);
   const [introData, setIntroData] = useState<IntroductionResult | null>(null);
+  const [polishData, setPolishData] = useState<PolishResult | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -43,6 +47,7 @@ export default function DashboardPage() {
   const [tabStatuses, setTabStatuses] = useState<Record<string, ModuleStatus>>({
     jd: "pending",
     star: "pending",
+    polish: "pending",
     gap: "pending",
     questions: "pending",
     intro: "pending",
@@ -125,11 +130,12 @@ export default function DashboardPage() {
       matchResultRef.current = match;
       setTabStatuses((prev) => ({ ...prev, star: "done" }));
 
-      // ---- 阶段 3：GAP + 追问 + 自我介绍 并行启动 ----
+      // ---- 阶段 3：GAP + 追问 + 自我介绍 + 经历打磨 并行启动 ----
       const dependents = [
         { id: "gap" as const, cacheKey: "gap_analysis", fn: () => fetchTabData("gap", match, jd) },
         { id: "questions" as const, cacheKey: "followup_questions", fn: () => fetchTabData("questions", match, jd) },
         { id: "intro" as const, cacheKey: "introduction", fn: () => fetchTabData("intro", match, jd) },
+        { id: "polish" as const, cacheKey: "polish_result", fn: () => fetchTabData("polish", null, jd) },
       ];
 
       setTabStatuses((prev) => ({
@@ -137,6 +143,7 @@ export default function DashboardPage() {
         gap: "loading",
         questions: "loading",
         intro: "loading",
+        polish: "loading",
       }));
 
       await Promise.allSettled(
@@ -171,6 +178,7 @@ export default function DashboardPage() {
     const map: Record<string, string> = {
       jd: "jd_breakdown",
       star: "match_result",
+      polish: "polish_result",
       gap: "gap_analysis",
       questions: "followup_questions",
       intro: "introduction",
@@ -185,6 +193,7 @@ export default function DashboardPage() {
       case "gap": setGapData(data); break;
       case "questions": setFollowUpData(data); break;
       case "intro": setIntroData(data); break;
+      case "polish": setPolishData(data); break;
     }
   };
 
@@ -269,6 +278,16 @@ export default function DashboardPage() {
             starMatchSummary: matchedSummary,
             companyText,
           }),
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error);
+        return json.data;
+      }
+      case "polish": {
+        const res = await fetch("/api/analyze/polish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resumeText, jdText }),
         });
         const json = await res.json();
         if (!json.success) throw new Error(json.error);
@@ -390,6 +409,8 @@ export default function DashboardPage() {
       badge = followUpData.questions.length;
     } else if (tab.id === "intro" && introData) {
       badge = introData.versions.length;
+    } else if (tab.id === "polish" && polishData) {
+      badge = polishData.experiences.filter((e) => e.riskLevel === "high").length || undefined;
     }
     return {
       ...tab,
@@ -557,6 +578,36 @@ export default function DashboardPage() {
                       : tabStatuses.questions === "pending"
                       ? "等待 STAR 匹配完成后自动开始..."
                       : "正在生成追问预测..."}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* 经历打磨 */}
+          {activeTab === "polish" && (
+            <>
+              {loading === "polish" && <LoadingSkeleton lines={6} />}
+              {errors.polish && <ErrorDisplay message={errors.polish} onRetry={() => handleRegenerate("polish")} />}
+              {!errors.polish && polishData && (
+                <>
+                  <div className="flex justify-end mb-3">
+                    <button onClick={() => handleRegenerate("polish")} className="text-xs text-slate-400 hover:text-blue-500 transition-colors">🔄 重新生成</button>
+                  </div>
+                  <ExperiencePolish data={polishData} />
+                </>
+              )}
+              {!errors.polish && !polishData && (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-3">
+                    {tabStatuses.polish === "loading" ? "⏳" : "📝"}
+                  </div>
+                  <p className="text-slate-400">
+                    {tabStatuses.polish === "loading"
+                      ? "AI 正在逐条深挖你的简历经历..."
+                      : tabStatuses.polish === "pending"
+                      ? "JD 拆解完成后自动开始..."
+                      : "正在加载经历打磨..."}
                   </p>
                 </div>
               )}
